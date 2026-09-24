@@ -1,7 +1,12 @@
-import { eq, asc } from 'drizzle-orm';
+import { eq, asc, and } from 'drizzle-orm';
 import type { Database } from './db';
 import { games, categories, publishers } from '../../db/schema';
 import type { Game } from '../types/game';
+
+export interface GameFilters {
+    publisherId?: number | null;
+    categoryId?: number | null;
+}
 
 const gameSelection = {
     id: games.id,
@@ -42,17 +47,29 @@ function mapGame(row: GameSelectionRow): Game {
     };
 }
 
-function baseGamesQuery(db: Database) {
-    return db
+function baseGamesQuery(db: Database, filters?: GameFilters) {
+    const query = db
         .select(gameSelection)
         .from(games)
         .leftJoin(categories, eq(games.categoryId, categories.id))
         .leftJoin(publishers, eq(games.publisherId, publishers.id));
+
+    const predicates = [];
+
+    if (filters?.publisherId !== undefined && filters.publisherId !== null) {
+        predicates.push(eq(games.publisherId, filters.publisherId));
+    }
+
+    if (filters?.categoryId !== undefined && filters.categoryId !== null) {
+        predicates.push(eq(games.categoryId, filters.categoryId));
+    }
+
+    return predicates.length > 0 ? query.where(and(...predicates)) : query;
 }
 
-/** All games ordered by title. */
-export async function getAllGames(db: Database): Promise<Game[]> {
-    const rows = await baseGamesQuery(db).orderBy(asc(games.title));
+/** All games ordered by title, optionally filtered by publisher and/or category. */
+export async function getAllGames(db: Database, filters?: GameFilters): Promise<Game[]> {
+    const rows = await baseGamesQuery(db, filters).orderBy(asc(games.title));
     return rows.map(mapGame);
 }
 
@@ -64,6 +81,13 @@ export async function getAllGameIds(db: Database): Promise<number[]> {
 
 /** A single game by id, or null when it does not exist. */
 export async function getGameById(db: Database, id: number): Promise<Game | null> {
-    const row = await baseGamesQuery(db).where(eq(games.id, id)).get();
+    const row = await db
+        .select(gameSelection)
+        .from(games)
+        .leftJoin(categories, eq(games.categoryId, categories.id))
+        .leftJoin(publishers, eq(games.publisherId, publishers.id))
+        .where(eq(games.id, id))
+        .get();
+
     return row ? mapGame(row) : null;
 }
